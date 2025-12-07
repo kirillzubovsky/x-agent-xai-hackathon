@@ -1,0 +1,225 @@
+# Environment Variables - NEVER commit these
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+/backend/prisma/*.db
+/backend/prisma/*.db-journal
+/backend/database/
+
+# API Keys and Secrets
+secrets.json
+credentials.json
+*.key
+*.pem
+*.crt
+*.cert
+serviceAccountKey.json
+firebase-config.json
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+*.local
+.output/
+.next/
+out/
+
+# Vite
+*.local
+
+# Testing
+coverage/
+*.lcov
+.nyc_output/
+test-results/
+
+# Logs
+logs/
+*.log
+*.log.*
+log-*.txt
+
+# Process IDs
+*.pid
+*.seed
+*.pid.lock
+.backend.pid
+.frontend.pid
+pids/
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.Spotlight-V100
+.Trashes
+._*
+*.swp
+*.swo
+*~
+
+# IDE and Editor files
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+.history/
+*.code-workspace
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+.parcel-cache/
+.turbo/
+
+# TypeScript
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# ESLint
+.eslintcache
+
+# Prettier
+.prettierignore
+.prettierrc.cache
+
+# Prisma
+/backend/prisma/migrations/dev/
+
+# Python (if any Python scripts are used)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+
+# Package manager files
+package-lock.json.backup
+yarn.lock.backup
+pnpm-lock.yaml.backup
+
+# User data and uploads
+uploads/
+user-data/
+/output/
+downloads/
+
+# Backup files
+*.bak
+*.backup
+*_backup
+backup/
+backups/
+
+# Monitoring and profiling
+*.heap
+*.cpuprofile
+*.heapsnapshot
+
+# Documentation build
+docs/_build/
+docs/.docusaurus/
+api-docs/
+
+# Test data (but keep test fixtures)
+test-data/*.db
+test-data/*.json
+!test-data/fixtures/
+
+# Session data
+sessions/
+.sessions/
+
+# Cache directories
+.cache/
+.npm/
+.yarn/
+.pnpm-store/
+
+# Generated files
+generated/
+auto-generated/
+
+# Webpack
+.webpack/
+
+# Next.js
+.next/
+out/
+.vercel/
+
+# Gatsby
+.cache/
+public/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Miscellaneous
+*.seed
+*.csv
+*.dat
+*.out
+*.gz
+*.zip
+*.tar
+*.rar
+*.7z
+!*.example.*
+
+# Project specific - X-Agent
+/backend/embeddings/
+/backend/tweets-cache/
+/frontend/public/avatars/
+*.embeddings.json
+twitter-cookies.json
+x-api-credentials.json
+user-sessions/
+comparison-cache/
+
+# Keep these files
+!.env.example
+!.gitkeep
+!README.md
+!package.json
+!package-lock.json
+!yarn.lock
+!pnpm-lock.yaml

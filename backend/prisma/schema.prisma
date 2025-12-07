@@ -1,0 +1,213 @@
+// This is your Prisma schema file for X-Agent
+// Focus on embeddings and similarity analysis
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model - stores X/Twitter user information
+model User {
+  id              String   @id @default(cuid())
+  twitterUserId   String   @unique
+  username        String   @unique
+  displayName     String
+  description     String?
+  profileImageUrl String?
+  verified        Boolean  @default(false)
+  verifiedType    String?
+  followersCount  Int      @default(0)
+  followingCount  Int      @default(0)
+  tweetCount      Int      @default(0)
+  listedCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  dossier         Dossier?
+  searchSuggestions SearchSuggestions?
+
+  // Relations
+  tweets          Tweet[]
+  embedding       UserEmbedding?
+  userSimilarity1 UserSimilarity[] @relation("user1")
+  userSimilarity2 UserSimilarity[] @relation("user2")
+  collections     DataCollection[]
+
+  @@index([username])
+  @@index([twitterUserId])
+}
+
+model Dossier {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content     String
+  model       String?
+  generatedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// SearchSuggestions model - stores AI-generated X search queries for users
+model SearchSuggestions {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  searches    String   // JSON array of search strings
+  model       String?  // AI model used to generate
+  generatedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Tweet model - stores individual tweets
+model Tweet {
+  id                     String   @id
+  userId                 String
+  content                String
+  inReplyToUserId        String?
+  inReplyToTweetId       String?
+  lang                   String?
+  source                 String?
+  contextAnnotationsJson String? // JSON string of context annotations
+  createdAt              DateTime
+  metricsJson            String // JSON string of public metrics
+  hasReplies             Boolean  @default(false)
+  hasQuotes              Boolean  @default(false)
+  hasEngagement          Boolean  @default(false)
+  isReply                Boolean  @default(false) // True if this is a reply to someone else
+  isDeleted              Boolean  @default(false)
+  lastSyncedAt           DateTime @default(now())
+
+  // Relations
+  user             User              @relation(fields: [userId], references: [id])
+  embedding        Embedding?
+  tweetSimilarity1 TweetSimilarity[] @relation("tweet1")
+  tweetSimilarity2 TweetSimilarity[] @relation("tweet2")
+
+  @@index([userId, createdAt])
+  @@index([userId, isReply])
+  @@index([createdAt])
+}
+
+// Embedding model - stores vector embeddings for tweets
+model Embedding {
+  id          String   @id @default(uuid())
+  tweetId     String   @unique
+  vector      Bytes // Stored as binary for efficiency
+  vectorDim   Int // Dimension count (384 for MiniLM)
+  modelName   String // Track which model generated this
+  cleanedText String? // Text after removing @mentions
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tweet Tweet @relation(fields: [tweetId], references: [id], onDelete: Cascade)
+
+  @@index([tweetId])
+  @@index([createdAt])
+}
+
+// UserEmbedding model - aggregated embeddings for users
+model UserEmbedding {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  vector     Bytes // Aggregated user vector
+  vectorDim  Int
+  tweetCount Int // Number of tweets in aggregate
+  modelName  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// TweetSimilarity model - stores similarity scores between tweets
+model TweetSimilarity {
+  id         String   @id @default(cuid())
+  tweetId1   String
+  tweetId2   String
+  similarity Float // Cosine similarity score (0-1)
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tweet1 Tweet @relation("tweet1", fields: [tweetId1], references: [id], onDelete: Cascade)
+  tweet2 Tweet @relation("tweet2", fields: [tweetId2], references: [id], onDelete: Cascade)
+
+  @@unique([tweetId1, tweetId2])
+  @@index([tweetId1, similarity])
+  @@index([tweetId2, similarity])
+  @@index([similarity])
+}
+
+// UserSimilarity model - stores similarity scores between users
+model UserSimilarity {
+  id         String   @id @default(cuid())
+  userId1    String
+  userId2    String
+  similarity Float
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user1 User @relation("user1", fields: [userId1], references: [id], onDelete: Cascade)
+  user2 User @relation("user2", fields: [userId2], references: [id], onDelete: Cascade)
+
+  @@unique([userId1, userId2])
+  @@index([userId1, similarity])
+  @@index([userId2, similarity])
+  @@index([similarity])
+}
+
+// DataCollection model - tracks collection jobs
+model DataCollection {
+  id             String    @id @default(cuid())
+  userId         String
+  collectionType String // 'tweets', 'embeddings', 'similarities'
+  status         String // 'pending', 'running', 'completed', 'failed'
+  itemsCollected Int       @default(0)
+  parametersJson String? // JSON string of parameters
+  errorMessage   String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, collectionType])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// RateLimit model - tracks API rate limits
+model RateLimit {
+  id          String   @id @default(cuid())
+  endpoint    String   @unique
+  remaining   Int
+  limit       Int
+  resetTime   DateTime
+  used        Int      @default(0)
+  lastChecked DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([endpoint])
+}
+
+// Settings model - application settings
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  type        String // 'string', 'number', 'boolean', 'json'
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}

@@ -1,0 +1,241 @@
+# X-Agent - Advanced Twitter/X Analytics Application
+
+## Executive Summary
+
+X-Agent is an advanced analytics platform for Twitter/X that uses AI and machine learning to analyze users, discover patterns, and provide intelligence insights. Built for the xAI Hackathon, it combines tweet collection, semantic embeddings, similarity analysis, and AI-powered profiling to help users understand and discover relevant accounts on Twitter/X.
+
+## Core Capabilities
+
+### 1. User Intelligence & Profiling
+- **Deep Profile Analysis (Dossiers)**: Uses Grok AI to generate comprehensive CIA-style profiles from user tweets, analyzing personality, interests, affiliations, and behavior patterns
+- **Multi-User Column View**: Side-by-side analysis of multiple Twitter/X users simultaneously
+- **Metrics Dashboard**: Track tweet performance with momentum analysis, percentile rankings, and trend visualization over 90-day periods
+- **Click-Through Analysis**: Click on metric spikes to see which tweets drove engagement
+
+### 2. Tweet Collection & Analysis
+- **Automated Collection**: Fetch and store thousands of tweets per user with automatic pagination and rate-limit handling
+- **Semantic Embeddings**: Generate 384-dimensional vectors for tweets using Xenova/all-MiniLM-L6-v2 transformer model
+- **Smart Filtering**: Configurable filters for replies, @mentions, minimum character length, and URLs
+- **Performance Tracking**: Monitor views, likes, engagements with momentum indicators (7-day vs 30-day baseline)
+
+### 3. AI-Powered Discovery
+
+#### Similar Account Discovery
+- **Embedding-Based Similarity**: Find accounts with similar content using cosine similarity on tweet embeddings
+- **Dossier Similarity**: Optional text-based similarity using AI-generated profiles
+- **Two Discovery Modes**:
+  - Followers Network: Search within target user's followers
+  - Keyword Search: Search based on dossier-extracted keywords
+- **Automatic Collection**: Auto-collect top 3 similar accounts with tweets and dossiers
+- **Cached Results**: Similarity scores stored in database for instant retrieval
+
+#### Search Suggestion Generation
+- **Grok-Powered Queries**: AI generates 8-10 optimized X search queries based on user profile
+- **Advanced Filters**: All searches include engagement filters (min_faves, min_replies, verified accounts, recent posts)
+- **Focused Topics**: Single-topic searches without OR operators for cleaner results
+- **Persistent Storage**: Saved searches can be regenerated or retrieved from database
+- **One-Click Copy**: Copy search URLs to paste directly into X
+
+### 4. Network Analysis
+- **Follower Management**: Fetch and analyze complete follower lists with sorting options
+- **Embedding Generation**: Create user-level embeddings by aggregating tweet vectors
+- **Relationship Mapping**: Store and visualize similarity relationships between users
+
+## Technology Stack
+
+### Frontend
+- **React 18** with hooks for UI components
+- **TanStack Query (React Query)** for data fetching and caching
+- **Tailwind CSS** for styling with custom X/Twitter theme
+- **Recharts** for metrics visualization
+- **Lucide React** for icons
+- **React Markdown** with remark-gfm for formatted AI responses
+
+### Backend
+- **Node.js** with Express.js
+- **Prisma ORM** with SQLite database
+- **Twitter API v2** (Enterprise tier) for data collection
+- **Xenova Transformers** for ML embeddings
+- **Grok AI (xAI)** for profile analysis and search generation
+
+### Key Architecture Patterns
+- **Multi-column interface**: Horizontal scrolling for multiple user analyses
+- **Collapsible UI**: Actions menu and AI panel can collapse to save screen space
+- **Scrollable tabs**: Overflow-x tabs for multiple data views per user
+- **Real-time updates**: React Query mutations with optimistic updates
+- **Background processing**: Long-running collection jobs with status tracking
+
+## Data Models
+
+### Core Entities
+1. **User**: Twitter/X user profile with metadata
+2. **Tweet**: Individual tweets with content, metrics, and reply information
+3. **Embedding**: 384-dimensional semantic vectors for tweets
+4. **UserEmbedding**: Aggregated user-level semantic vectors
+5. **Dossier**: AI-generated comprehensive user profiles
+6. **SearchSuggestions**: Grok-generated X search queries
+7. **UserSimilarity**: Cached similarity scores between users
+8. **DataCollection**: Background job tracking for tweet collection
+
+### Key Relationships
+- User → Tweets (one-to-many)
+- User → Embedding (one-to-one, aggregated)
+- Tweet → Embedding (one-to-one, semantic)
+- User → Dossier (one-to-one, AI-generated)
+- User → SearchSuggestions (one-to-one)
+- User ↔ User via UserSimilarity (many-to-many with scores)
+
+## Unique Features
+
+### 1. Embedding Pipeline
+- Filters tweets by length (100+ chars after cleaning)
+- Removes @mentions and optionally URLs
+- Excludes replies (configurable)
+- Batches processing for efficiency (32 tweets per batch)
+- Aggregates tweet embeddings into user-level vectors using mean pooling
+
+### 2. Metrics Intelligence
+- **Momentum Analysis**: Last 7 days vs previous 30 days performance
+- **Percentile Ranking**: Where current performance ranks in 90-day history
+- **Performance Tiers**: Top quartile, above/below median, bottom quartile
+- **Separate Stats**: Independent tracking for views, likes, engagements
+- **Date Filtering**: Click graph points to filter tweets by date
+
+### 3. AI Integration
+- **Grok for Dossiers**: 12,000 token limit for comprehensive profiles
+- **Grok for Search Queries**: Contextual search generation with engagement filters
+- **Markdown Rendering**: Proper formatting of AI responses with code blocks, lists, tables
+- **Smart Prompting**: Explicit instructions to avoid quotes and OR operators for clean URLs
+
+### 4. Collection Recovery
+- **Interrupted Collection Detection**: Resumes failed collections on startup
+- **Status Tracking**: Real-time progress updates for long-running jobs
+- **Rate Limit Handling**: Automatic backoff and retry logic
+- **Pagination Support**: Handles large tweet volumes with cursor-based pagination
+
+## User Interface Features
+
+### Column-Based Layout
+- Add unlimited user columns side-by-side
+- Each column shows: profile, stats, action buttons, tabs
+- Collapsible actions menu (6 buttons: Collect, Embed, Followers, Dossier, Get Similar, Find Searches)
+- Scrollable tabs (Tweets, Followers, Dossier, Searches, Metrics)
+
+### Tabs Content
+1. **Tweets Tab**: Scrollable tweet feed with metrics, date filtering, reply toggle
+2. **Followers Tab**: Sortable follower list (recent, followers, alphabetical, tweets, oldest)
+3. **Dossier Tab**: AI-generated profile with copy button and regeneration
+4. **Searches Tab**: AI-suggested search queries with copy-to-clipboard
+5. **Metrics Tab**: Interactive chart with momentum/percentile indicators, click-through filtering
+
+### AI & Analysis Panel (Right Side)
+- Three states: collapsed, normal, fullscreen
+- Resizable width (300-800px)
+- Chat interface for asking questions about collected data
+- Markdown-formatted responses with proper overflow handling
+
+### Modal Dialogs
+- Add User: Search and add new users to analyze
+- Similar Accounts: Shows discovered accounts with similarity scores and "View Profile" buttons
+- Debug Panel: Request/response inspector for API debugging
+
+## Configuration
+
+### Embedding Settings (config.js)
+```javascript
+embeddings: {
+  model: 'Xenova/all-MiniLM-L6-v2',
+  dimension: 384,
+  batchSize: 32,
+  filtering: {
+    excludeReplies: true,
+    removeAtMentions: true,
+    minCharacterLength: 100,
+    removeUrls: false
+  }
+}
+```
+
+### API Integration
+- Twitter API Enterprise tier for high rate limits
+- Grok AI for profile analysis and search generation
+- Configurable token limits and model selection
+
+## Performance Optimizations
+
+1. **Caching Strategy**:
+   - React Query caches API responses client-side
+   - UserSimilarity table caches similarity scores
+   - SearchSuggestions table caches AI-generated queries
+   - Dossiers cached with timestamps for staleness checking
+
+2. **Efficient Data Loading**:
+   - Tweets load 5000 at once for complete date filtering
+   - Followers pagination for large networks
+   - Lazy loading of embeddings and dossiers
+
+3. **Background Processing**:
+   - Collection jobs run asynchronously
+   - Status polling for progress updates
+   - Non-blocking UI during long operations
+
+## Use Cases
+
+1. **Influencer Analysis**: Deep-dive into any Twitter/X user's content, patterns, and audience
+2. **Network Discovery**: Find similar accounts in any niche using AI-powered similarity
+3. **Content Research**: Generate targeted X searches to discover relevant conversations
+4. **Engagement Tracking**: Monitor tweet performance and identify high-performing content
+5. **Audience Intelligence**: Understand follower networks and relationships
+6. **Competitive Analysis**: Compare multiple accounts side-by-side with metrics
+
+## For AI Assistants Working With This Codebase
+
+### Key Files
+- `/backend/routes/users.js` - Main API endpoints for user operations
+- `/backend/routes/tweets.js` - Tweet collection and retrieval
+- `/backend/services/embedding-service.js` - ML embedding generation
+- `/backend/services/collection-service.js` - Tweet collection orchestration
+- `/backend/services/ai-providers/grok-provider.js` - Grok AI integration
+- `/frontend/src/components/UserColumn.jsx` - Main user interface component (1100+ lines)
+- `/backend/prisma/schema.prisma` - Database schema definitions
+
+### Common Operations
+- Adding features: Most user-facing features go in UserColumn.jsx with corresponding backend endpoints
+- Database changes: Update schema.prisma, run `npm run db:push`, regenerate Prisma client
+- API endpoints: Follow pattern in routes/users.js with proper error handling and logging
+- Styling: Use Tailwind with custom X-themed color classes (x-blue, x-gray, x-dark, x-border)
+
+### Architecture Principles
+- **Single source of truth**: Database stores all persistent state
+- **API-first**: All data access through REST endpoints
+- **Component modularity**: Reusable components like SearchItem, TweetCard
+- **Progressive enhancement**: Features work independently (embeddings optional for basic viewing)
+- **Graceful degradation**: Missing data shows empty states, not errors
+
+## Current Limitations
+
+1. **No real-time updates**: Must manually refresh to see new tweets
+2. **Single API key**: No multi-user authentication or API key management
+3. **Local only**: SQLite database, not suitable for production deployment
+4. **No data export**: Cannot export analysis results to CSV/JSON
+5. **Limited tweet filters**: Cannot filter by date range, engagement threshold, or content keywords in UI
+
+## Future Enhancement Opportunities
+
+1. Real-time tweet streaming and notifications
+2. Multi-user authentication with API key management
+3. Advanced filtering UI for tweets (date ranges, engagement thresholds, keywords)
+4. Export capabilities for analysis results
+5. Scheduled collection jobs for keeping data fresh
+6. More AI analysis features (sentiment, topic modeling, trend detection)
+7. PostgreSQL migration for production scalability
+8. Visualization improvements (network graphs, timeline views)
+9. Webhook support for automation
+10. Browser extension for in-app X.com integration
+
+---
+
+**Built for**: xAI Hackathon
+**Primary AI Model**: Grok AI
+**Embedding Model**: Xenova/all-MiniLM-L6-v2
+**Status**: Fully functional prototype with advanced analytics capabilities

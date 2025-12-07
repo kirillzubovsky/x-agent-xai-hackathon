@@ -1,0 +1,16 @@
+{
+  "name": "xai-hackathon",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Root workspace for XAI Hackathon app (backend + frontend)",
+  "scripts": {
+    "db:generate": "cd backend && npm run db:generate",
+    "db:push": "cd backend && npm run db:push",
+    "db:migrate": "cd backend && npm run db:migrate",
+    "db:studio": "cd backend && npm run db:studio",
+    "db:reset": "cd backend && npm run db:reset",
+    "backend:start": "cd backend && npm start",
+    "frontend:dev": "cd frontend && npm run dev"
+  }
+}
