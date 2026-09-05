@@ -10,7 +10,7 @@ export class GrokProvider extends BaseAIProvider {
   constructor(config) {
     super(config);
     this.name = 'Grok';
-    this.model = config.ai?.xai?.model || 'grok-4-fast-reasoning-latest';
+    this.model = config.ai?.xai?.model || 'grok-4.20-0309-reasoning';
     this.apiKey = config.ai?.xai?.apiKey;
     this.baseUrl = config.ai?.xai?.baseUrl || 'https://api.x.ai/v1';
     this.maxContextTokens = 8192; // Grok supports larger context

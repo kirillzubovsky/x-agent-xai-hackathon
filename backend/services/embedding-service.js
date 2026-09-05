@@ -308,14 +308,17 @@ async function generateUserEmbedding(userId) {
       return null;
     }
 
+    // Safely convert Buffer to Float32Array (copies to aligned ArrayBuffer)
+    const toFloat32 = (buf) => new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+
     // Convert first vector from Buffer to array to get dimension
-    const firstVector = new Float32Array(embeddings[0].vector.buffer, embeddings[0].vector.byteOffset, embeddings[0].vector.byteLength / 4);
+    const firstVector = toFloat32(embeddings[0].vector);
     const dimension = firstVector.length;
     const avgEmbedding = new Array(dimension).fill(0);
 
     // Process all embeddings
     for (const { vector } of embeddings) {
-      const floatArray = new Float32Array(vector.buffer, vector.byteOffset, vector.byteLength / 4);
+      const floatArray = toFloat32(vector);
       for (let i = 0; i < dimension; i++) {
         avgEmbedding[i] += floatArray[i];
       }
@@ -386,5 +389,6 @@ export async function getJobStatus(jobId) {
 export default {
   processUserTweetEmbeddings,
   generateEmbedding,
+  cleanTweetText,
   getJobStatus
 };

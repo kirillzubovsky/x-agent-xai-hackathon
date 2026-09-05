@@ -18,7 +18,7 @@ export class BaseAIProvider {
    * Format the context (tweets, users, embeddings) into a system prompt
    */
   formatContext(context) {
-    const { users, tweets, similarityTweets, embeddings } = context;
+    const { users, tweets, similarityTweets, embeddings, followers } = context;
 
     let systemPrompt =
       "You are an AI assistant analyzing Twitter/X user data and tweets.\n\n";
@@ -62,6 +62,17 @@ export class BaseAIProvider {
       systemPrompt += `## Semantic Analysis Available:\n`;
       systemPrompt += `- ${embeddings.length} user embedding(s) available for semantic similarity analysis\n`;
       systemPrompt += `- These embeddings capture the overall writing style and topics of each user\n\n`;
+    }
+
+    // Add follower data if available
+    if (followers && followers.length > 0) {
+      systemPrompt += `## Followers (${followers.length} accounts, sorted by follower count):\n`;
+      systemPrompt += "Each line: @username | bio | follower count\n";
+      followers.forEach((f) => {
+        const bio = f.description ? f.description.replace(/\n/g, ' ').substring(0, 200) : 'No bio';
+        systemPrompt += `@${f.username} | ${bio} | ${f.followersCount.toLocaleString()} followers\n`;
+      });
+      systemPrompt += "\n";
     }
 
     systemPrompt +=

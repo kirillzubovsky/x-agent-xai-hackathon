@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../../logger.js';
+import { xAPI } from '../lib/twitter-api.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -104,6 +105,33 @@ router.get('/:tweetId/similar', async (req, res) => {
   } catch (error) {
     logger.error('Failed to get similar tweets', { error: error.message });
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Get users who liked a specific tweet (OAuth 1.0a user-context)
+router.get('/:tweetId/liking-users', async (req, res) => {
+  try {
+    const { tweetId } = req.params;
+    const { paginationToken } = req.query;
+
+    if (!xAPI.hasUserContext()) {
+      return res.status(400).json({
+        error: 'OAuth 1.0a not configured. Set X_COM_ACCESS_TOKEN and X_COM_ACCESS_TOKEN_SECRET in .env'
+      });
+    }
+
+    const result = await xAPI.getLikingUsers(tweetId, {
+      paginationToken: paginationToken || null,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to get liking users', { tweetId: req.params.tweetId, error: error.message });
+    const status = error.response?.status || 500;
+    res.status(status).json({
+      error: error.message,
+      detail: error.response?.data
+    });
   }
 });
 

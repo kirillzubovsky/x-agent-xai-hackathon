@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Download, Zap, Users, MessageSquare, CheckCircle, AlertCircle, ExternalLink, PlayCircle, Trash2, User, Brain, Copy, Check, Search, ChevronDown, ChevronUp, Rocket } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -10,12 +10,38 @@ export function UserColumn({ columnId, userId, onClose }) {
   const [selectedDate, setSelectedDate] = useState(null);
   const [collectionMessage, setCollectionMessage] = useState(null);
   const [embeddingMessage, setEmbeddingMessage] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMode, setSearchMode] = useState('text');
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [semanticResults, setSemanticResults] = useState(null);
+  const searchTimeoutRef = useRef(null);
   const [followers, setFollowers] = useState([]);
   const [showActions, setShowActions] = useState(false);
+  const [dismissedIncomplete, setDismissedIncomplete] = useState(false);
+  const [collectAmount, setCollectAmount] = useState(1000);
+  const [showCollectDropdown, setShowCollectDropdown] = useState(false);
+  // Auto-load stored followers from DB on mount
+  const storedFollowersQuery = useQuery({
+    queryKey: ['stored-followers', userId],
+    queryFn: async () => {
+      const res = await axios.get(`/api/users/${userId}/stored-followers`);
+      return res.data.data || [];
+    },
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Sync followers state from stored query
+  useEffect(() => {
+    if (storedFollowersQuery.data && storedFollowersQuery.data.length > 0 && followers.length === 0) {
+      setFollowers(storedFollowersQuery.data);
+    }
+  }, [storedFollowersQuery.data]);
+
   const getFollowersMutation = useMutation({
-    mutationFn: async () => {
-      console.log('[Followers] Starting fetch for userId:', userId);
-      const res = await axios.post(`/api/users/${userId}/followers-full`, { maxUsers: 999999 });
+    mutationFn: async (maxUsers = 500) => {
+      console.log('[Followers] Starting fetch for userId:', userId, 'maxUsers:', maxUsers);
+      const res = await axios.post(`/api/users/${userId}/followers-full`, { maxUsers });
       console.log('[Followers] Response received:', res.data);
       console.log('[Followers] Followers data:', res.data.data);
       return res.data.data;
@@ -23,12 +49,28 @@ export function UserColumn({ columnId, userId, onClose }) {
     onSuccess: (data) => {
       console.log('[Followers] Success! Setting followers:', data?.length, 'items');
       setFollowers(data);
+      // Invalidate stored followers query to refresh
+      queryClient.invalidateQueries({ queryKey: ['stored-followers', userId] });
     },
     onError: (error) => {
       console.error('[Followers] ERROR:', error);
       console.error('[Followers] Error response:', error.response?.data);
       console.error('[Followers] Error status:', error.response?.status);
-      // Optional toast/error message
+    }
+  });
+
+  // Sync follower IDs from X API (cheap - links existing DB records)
+  const syncFollowersMutation = useMutation({
+    mutationFn: async () => {
+      const res = await axios.post(`/api/users/${userId}/sync-follower-ids`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      console.log('[Followers] Synced:', data.linkedInDb, 'linked from', data.totalFromApi, 'API results');
+      queryClient.invalidateQueries({ queryKey: ['stored-followers', userId] });
+    },
+    onError: (error) => {
+      console.error('[Followers] Sync error:', error);
     }
   });
   const [blocked, setBlocked] = useState([]);
@@ -103,6 +145,53 @@ const metricsQuery = useQuery({
     }
   });
 
+  const semanticSearchMutation = useMutation({
+    mutationFn: async (text) => {
+      const res = await axios.post('/api/similarities/search', {
+        text,
+        userId,
+        minSimilarity: 0.3,
+        limit: 50
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setSemanticResults(data.results);
+    },
+    onError: (error) => {
+      console.error('Semantic search failed', error);
+      setSemanticResults(null);
+    }
+  });
+
+  const handleSearchChange = (value) => {
+    setSearchQuery(value);
+    if (searchMode === 'semantic') {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (value.trim().length > 0) {
+        searchTimeoutRef.current = setTimeout(() => {
+          semanticSearchMutation.mutate(value.trim());
+        }, 500);
+      } else {
+        setSemanticResults(null);
+      }
+    }
+  };
+
+  const handleSearchModeChange = (mode) => {
+    setSearchMode(mode);
+    setSemanticResults(null);
+    if (mode === 'semantic' && searchQuery.trim().length > 0) {
+      semanticSearchMutation.mutate(searchQuery.trim());
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSemanticResults(null);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  };
+
   const liveTimelineMutation = useMutation({
     mutationFn: async () => {
       setLiveProgress({ stage: 'starting', message: 'Loading saved searches...' });
@@ -121,9 +210,9 @@ const metricsQuery = useQuery({
   });
 
   const onboardingMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (maxTweets) => {
       const res = await axios.post(`/api/users/${userId}/onboard`, {
-        maxTweets: 1000,
+        maxTweets: maxTweets || collectAmount,
         includeReplies: false,
         skipIfExists: true
       });
@@ -256,10 +345,10 @@ const metricsQuery = useQuery({
 
   // Collection mutation
   const collectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await axios.post(`/api/users/${userId}/collect`, {
-        includeReplies: true
-      }); // Omit maxTweets for unlimited (backend default Infinity)
+    mutationFn: async (maxTweets) => {
+      const body = { includeReplies: true };
+      if (maxTweets && maxTweets !== 'all') body.maxTweets = maxTweets;
+      const res = await axios.post(`/api/users/${userId}/collect`, body);
       return res.data;
     },
     onSuccess: (data) => {
@@ -437,18 +526,19 @@ const metricsQuery = useQuery({
       const res = await axios.delete(`/api/users/${userId}/collect/interrupted`);
       return res.data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setCollectionMessage({
         type: 'success',
-        text: `Cleared ${data.cleared} interrupted collection(s)`
+        text: `Dismissed ${data.cleared} interrupted collection(s)`
       });
-      queryClient.invalidateQueries(['collectionStatus', userId]);
-      setTimeout(() => setCollectionMessage(null), 5000);
+      await queryClient.invalidateQueries(['collectionStatus', userId]);
+      await refetchCollectionStatus();
+      setTimeout(() => setCollectionMessage(null), 3000);
     },
     onError: (error) => {
       setCollectionMessage({
         type: 'error',
-        text: error.response?.data?.error || 'Failed to clear interrupted collection'
+        text: error.response?.data?.error || 'Failed to dismiss interrupted collection'
       });
       setTimeout(() => setCollectionMessage(null), 5000);
     }
@@ -529,22 +619,35 @@ const metricsQuery = useQuery({
                   Quick Start Onboarding
                 </div>
                 <p className="text-xs text-gray-300 leading-relaxed">
-                  Automatically collect tweets, generate embeddings, create AI dossier, find relevant searches, and generate LIVE timeline - all in one click!
+                  Automatically collect tweets, generate embeddings, create AI dossier, find relevant searches, and generate LIVE timeline.
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => onboardingMutation.mutate()}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center"
-            >
-              <Rocket className="w-4 h-4 mr-2" />
-              Start Auto-Onboarding
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={collectAmount}
+                onChange={(e) => setCollectAmount(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+                className="bg-x-dark border border-x-border rounded px-2 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value={100}>100 tweets</option>
+                <option value={500}>500 tweets</option>
+                <option value={1000}>1,000 tweets</option>
+                <option value={5000}>5,000 tweets</option>
+                <option value="all">All tweets</option>
+              </select>
+              <button
+                onClick={() => onboardingMutation.mutate(collectAmount === 'all' ? undefined : collectAmount)}
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center"
+              >
+                <Rocket className="w-4 h-4 mr-2" />
+                Start
+              </button>
+            </div>
           </div>
         )}
 
         {/* Resume Incomplete Onboarding */}
-        {stats?.totalTweets > 0 && (!user.embedding || !savedSearches?.hasSearches) && !onboardingMutation.isPending && !onboardingStatus && (
+        {stats?.totalTweets > 0 && (!user.embedding || !savedSearches?.hasSearches) && !onboardingMutation.isPending && !onboardingStatus && !dismissedIncomplete && (
           <div className="p-3 mb-3 rounded-lg bg-gradient-to-r from-orange-900/30 to-yellow-900/30 border border-orange-500/30">
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1">
@@ -558,6 +661,13 @@ const metricsQuery = useQuery({
                   Complete setup to unlock all features.
                 </p>
               </div>
+              <button
+                onClick={() => setDismissedIncomplete(true)}
+                className="text-gray-500 hover:text-gray-300 ml-2"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             <button
               onClick={() => onboardingMutation.mutate()}
@@ -581,12 +691,17 @@ const metricsQuery = useQuery({
                 <p className="text-xs text-yellow-400/80">
                   {interruptedCollection.itemsCollected} tweets collected before interruption
                 </p>
-                <p className="text-xs text-yellow-400/60 mt-1">
-                  {interruptedCollection.errorMessage}
-                </p>
               </div>
+              <button
+                onClick={() => clearInterruptedMutation.mutate()}
+                disabled={clearInterruptedMutation.isPending}
+                className="text-gray-500 hover:text-gray-300 ml-2"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <div className="flex space-x-2 mt-3">
+            <div className="flex space-x-2 mt-2">
               <button
                 onClick={() => resumeCollectionMutation.mutate()}
                 disabled={resumeCollectionMutation.isPending}
@@ -601,7 +716,7 @@ const metricsQuery = useQuery({
                 className="flex-1 btn-secondary text-xs py-1.5"
               >
                 <Trash2 className="w-3 h-3 inline mr-1" />
-                {clearInterruptedMutation.isPending ? 'Clearing...' : 'Clear'}
+                {clearInterruptedMutation.isPending ? 'Clearing...' : 'Dismiss'}
               </button>
             </div>
           </div>
@@ -656,15 +771,39 @@ const metricsQuery = useQuery({
 
           {showActions && (
             <div className="p-3 grid grid-cols-2 gap-2 border-t border-x-border">
-              <button
-                onClick={() => collectMutation.mutate()}
-                disabled={collectMutation.isPending || runningCollection}
-                className="btn-primary text-xs p-2"
-                title={runningCollection ? 'Collection already in progress' : undefined}
-              >
-                <Download className="w-3 h-3 inline mr-1" />
-                Collect
-              </button>
+              <div className="relative">
+                <div className="flex">
+                  <button
+                    onClick={() => collectMutation.mutate(collectAmount === 'all' ? undefined : collectAmount)}
+                    disabled={collectMutation.isPending || runningCollection}
+                    className="btn-primary text-xs p-2 flex-1 rounded-r-none"
+                    title={runningCollection ? 'Collection already in progress' : `Collect ${collectAmount === 'all' ? 'all' : collectAmount} tweets`}
+                  >
+                    <Download className="w-3 h-3 inline mr-1" />
+                    {collectAmount === 'all' ? 'All' : collectAmount}
+                  </button>
+                  <button
+                    onClick={() => setShowCollectDropdown(!showCollectDropdown)}
+                    disabled={collectMutation.isPending || runningCollection}
+                    className="btn-primary text-xs px-1.5 rounded-l-none border-l border-blue-400/30"
+                  >
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                </div>
+                {showCollectDropdown && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-x-dark border border-x-border rounded shadow-lg z-10">
+                    {[100, 500, 1000, 5000, 'all'].map(amount => (
+                      <button
+                        key={amount}
+                        onClick={() => { setCollectAmount(amount === 'all' ? 'all' : amount); setShowCollectDropdown(false); }}
+                        className={`w-full text-left text-xs px-3 py-1.5 hover:bg-x-border transition-colors ${collectAmount === amount ? 'text-blue-400' : 'text-gray-300'}`}
+                      >
+                        {amount === 'all' ? 'All tweets' : `${amount.toLocaleString()} tweets`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => embeddingMutation.mutate()}
                 disabled={embeddingMutation.isPending}
@@ -674,10 +813,10 @@ const metricsQuery = useQuery({
                 Embed
               </button>
               <button
-                onClick={() => getFollowersMutation.mutate()}
+                onClick={() => getFollowersMutation.mutate(500)}
                 disabled={getFollowersMutation.isPending}
                 className="btn-secondary text-xs p-2"
-                title={getFollowersMutation.isPending ? 'Fetching...' : 'Get full followers list'}
+                title={getFollowersMutation.isPending ? 'Fetching...' : 'Fetch up to 500 followers'}
               >
                 <Users className="w-3 h-3 inline mr-1" />
                 {getFollowersMutation.isPending ? 'Fetching...' : 'Followers'}
@@ -733,10 +872,7 @@ const metricsQuery = useQuery({
         </button>
         <button
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium whitespace-nowrap ${activeTab === 'followers' ? 'border-b-2 border-blue-500 text-blue-400' : 'text-x-gray hover:text-white hover:border-b hover:border-gray-600'}`}
-          onClick={() => {
-            setActiveTab('followers');
-            if (followers.length === 0) getFollowersMutation.mutate();
-          }}
+          onClick={() => setActiveTab('followers')}
         >
           Followers ({user?.followersCount?.toLocaleString() || 0})
         </button>
@@ -787,53 +923,106 @@ const metricsQuery = useQuery({
                 />
                 <span>Include replies</span>
               </label>
-              {selectedDate && (
+              <div className="flex items-center gap-2">
+                {selectedDate && (
+                  <>
+                    <span className="text-xs px-2 py-1 bg-blue-600 text-white rounded">
+                      {new Date(selectedDate).toLocaleDateString()}
+                    </span>
+                    <button
+                      onClick={() => setSelectedDate(null)}
+                      className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-500"
+                    >
+                      Clear filter
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => { setShowSearchBar(!showSearchBar); if (showSearchBar) clearSearch(); }}
+                  className={`p-1 rounded transition-colors ${showSearchBar ? 'text-blue-400 bg-blue-400/10' : 'text-x-gray hover:text-white'}`}
+                  title="Search tweets"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            {showSearchBar && (
+              <div className="mt-2 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs px-2 py-1 bg-blue-600 text-white rounded">
-                    {new Date(selectedDate).toLocaleDateString()}
-                  </span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder={searchMode === 'text' ? 'Filter by keyword...' : 'Semantic search...'}
+                    className="flex-1 bg-x-dark border border-x-border rounded px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-x-gray"
+                    autoFocus
+                  />
+                  {searchQuery && (
+                    <button onClick={clearSearch} className="text-x-gray hover:text-white">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                  {semanticSearchMutation.isPending && (
+                    <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  )}
+                </div>
+                <div className="flex gap-1">
                   <button
-                    onClick={() => setSelectedDate(null)}
-                    className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-500"
+                    onClick={() => handleSearchModeChange('text')}
+                    className={`text-xs px-3 py-1 rounded-full transition-colors ${searchMode === 'text' ? 'bg-blue-600 text-white' : 'bg-x-bg text-x-gray hover:text-white border border-x-border'}`}
                   >
-                    Clear filter
+                    Text
+                  </button>
+                  <button
+                    onClick={() => handleSearchModeChange('semantic')}
+                    className={`text-xs px-3 py-1 rounded-full transition-colors ${searchMode === 'semantic' ? 'bg-purple-600 text-white' : 'bg-x-bg text-x-gray hover:text-white border border-x-border'}`}
+                  >
+                    Semantic
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
           {/* Tweets List */}
           <div className="flex-1 overflow-y-auto">
             {(() => {
-              const filteredTweets = tweets?.filter(tweet => {
-                if (!selectedDate) return true;
-                // Compare dates without time component
-                const tweetDate = tweet.createdAt.split('T')[0];
-                return tweetDate === selectedDate;
-              }) || [];
+              // Start with semantic results or all tweets
+              let displayTweets;
+              if (searchMode === 'semantic' && semanticResults && searchQuery.trim()) {
+                displayTweets = semanticResults.map(r => ({ ...r.tweet, _similarity: r.similarity }));
+              } else {
+                displayTweets = tweets || [];
+              }
 
-              if (filteredTweets.length === 0 && selectedDate) {
+              // Apply text search filter
+              if (searchMode === 'text' && searchQuery.trim()) {
+                const q = searchQuery.toLowerCase();
+                displayTweets = displayTweets.filter(t => t.content?.toLowerCase().includes(q));
+              }
+
+              // Apply date filter
+              if (selectedDate) {
+                displayTweets = displayTweets.filter(t => t.createdAt?.split('T')[0] === selectedDate);
+              }
+
+              if (displayTweets.length === 0) {
                 return (
                   <div className="text-center py-8 text-gray-400">
-                    <p>No tweets found for {new Date(selectedDate).toLocaleDateString()}</p>
-                    <p className="text-xs mt-2">
-                      Showing {showReplies ? 'all tweets including replies' : 'only original tweets'}.
-                    </p>
-                    <p className="text-xs mt-1">
-                      Total tweets loaded: {tweets?.length || 0}
-                    </p>
-                    <button
-                      onClick={() => setShowReplies(!showReplies)}
-                      className="mt-2 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-500"
-                    >
-                      {showReplies ? 'Hide replies' : 'Show replies'}
-                    </button>
+                    <p>{searchQuery ? `No tweets found for "${searchQuery}"` : selectedDate ? `No tweets found for ${new Date(selectedDate).toLocaleDateString()}` : 'No tweets'}</p>
+                    {selectedDate && (
+                      <button
+                        onClick={() => setSelectedDate(null)}
+                        className="mt-2 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-500"
+                      >
+                        Clear date filter
+                      </button>
+                    )}
                   </div>
                 );
               }
 
-              return filteredTweets.map((tweet) => (
-                <TweetCard key={tweet.id} tweet={tweet} username={user?.username} />
+              return displayTweets.map((tweet) => (
+                <TweetCard key={tweet.id} tweet={tweet} username={user?.username} similarity={tweet._similarity} />
               ));
             })()}
           </div>
@@ -861,13 +1050,46 @@ const metricsQuery = useQuery({
           {getFollowersMutation.isPending ? (
             <div className="flex items-center justify-center h-full text-x-gray">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
-              Fetching followers (this may take a while for large graphs)...
+              Fetching followers...
             </div>
           ) : followers.length === 0 ? (
             <div className="text-center py-8 text-x-gray">
               <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg">No followers loaded</p>
-              <p className="text-sm">Click the "Get Followers" button to fetch the full list.</p>
+              <p className="text-lg mb-3">
+                {storedFollowersQuery.isLoading ? 'Loading stored followers...' : 'No followers loaded'}
+              </p>
+              {syncFollowersMutation.isPending ? (
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-500"></div>
+                  <span className="text-sm text-green-400">Syncing follower IDs...</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => syncFollowersMutation.mutate()}
+                  className="text-xs px-4 py-2 mb-3 bg-green-900/30 border border-green-700 rounded hover:border-green-500 hover:text-green-400 transition-colors"
+                  title="Links existing DB records using X API follower IDs (very cheap — ~3 API calls)"
+                >
+                  Sync from X (cheap)
+                </button>
+              )}
+              <p className="text-xs text-x-gray mb-2">Or fetch full profiles from X API:</p>
+              <div className="flex items-center justify-center gap-2">
+                {[100, 500, 1000].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => getFollowersMutation.mutate(n)}
+                    className="text-xs px-3 py-1.5 bg-x-dark border border-x-border rounded hover:border-blue-500 hover:text-blue-400 transition-colors"
+                  >
+                    {n.toLocaleString()}
+                  </button>
+                ))}
+                <button
+                  onClick={() => getFollowersMutation.mutate(999999)}
+                  className="text-xs px-3 py-1.5 bg-x-dark border border-x-border rounded hover:border-blue-500 hover:text-blue-400 transition-colors"
+                >
+                  All
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1475,25 +1697,68 @@ function SearchItem({ search }) {
   );
 }
 
-function TweetCard({ tweet, username }) {
+function TweetCard({ tweet, username, similarity }) {
   const metrics = JSON.parse(tweet.metricsJson || '{}');
   const tweetUrl = username ? `https://x.com/${username}/status/${tweet.id}` : null;
+  const [showLikers, setShowLikers] = useState(false);
+  const [likers, setLikers] = useState(null);
+  const [likersLoading, setLikersLoading] = useState(false);
+  const [likersError, setLikersError] = useState(null);
+  const [likersNextToken, setLikersNextToken] = useState(null);
+
+  const fetchLikers = async (paginationToken = null) => {
+    setLikersLoading(true);
+    setLikersError(null);
+    try {
+      const params = paginationToken ? `?paginationToken=${paginationToken}` : '';
+      const res = await axios.get(`/api/tweets/${tweet.id}/liking-users${params}`);
+      if (paginationToken && likers) {
+        setLikers([...likers, ...(res.data.data || [])]);
+      } else {
+        setLikers(res.data.data || []);
+      }
+      setLikersNextToken(res.data.nextToken || null);
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message;
+      setLikersError(msg);
+    } finally {
+      setLikersLoading(false);
+    }
+  };
+
+  const handleLikeClick = () => {
+    if (!showLikers && !likers) {
+      fetchLikers();
+    }
+    setShowLikers(!showLikers);
+  };
 
   return (
     <div className="p-4 border-b border-x-border hover:bg-x-dark transition-colors">
       <div className="flex justify-between items-start">
         <p className="text-sm whitespace-pre-wrap mb-2 flex-1">{tweet.content}</p>
-        {tweetUrl && (
-          <a
-            href={tweetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-2 text-x-gray hover:text-x-blue transition-colors"
-            title="View on X"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </a>
-        )}
+        <div className="flex items-center gap-1 ml-2">
+          {similarity != null && (
+            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+              similarity >= 0.8 ? 'bg-green-500/20 text-green-400' :
+              similarity >= 0.6 ? 'bg-yellow-500/20 text-yellow-400' :
+              'bg-orange-500/20 text-orange-400'
+            }`}>
+              {Math.round(similarity * 100)}%
+            </span>
+          )}
+          {tweetUrl && (
+            <a
+              href={tweetUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-x-gray hover:text-x-blue transition-colors"
+              title="View on X"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </a>
+          )}
+        </div>
       </div>
       <div className="flex items-center space-x-4 text-xs text-x-gray">
         <span>{new Date(tweet.createdAt).toLocaleDateString()}</span>
@@ -1501,9 +1766,14 @@ function TweetCard({ tweet, username }) {
         <span className="flex items-center font-medium text-blue-400">
           👁️ {(metrics.impression_count || 0).toLocaleString()}
         </span>
-        <span className="flex items-center font-medium text-pink-400">
+        <button
+          onClick={handleLikeClick}
+          className="flex items-center font-medium text-pink-400 hover:text-pink-300 hover:bg-pink-500/10 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+          title="Click to see who liked this"
+        >
           ❤️ {(metrics.like_count || 0).toLocaleString()}
-        </span>
+          {showLikers ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
+        </button>
         {metrics.reply_count > 0 && (
           <span className="flex items-center">
             <MessageSquare className="w-3 h-3 mr-1" />
@@ -1514,6 +1784,68 @@ function TweetCard({ tweet, username }) {
           <Zap className="w-3 h-3 text-purple-500" />
         )}
       </div>
+
+      {showLikers && (
+        <div className="mt-3 p-3 bg-x-dark rounded-lg border border-x-border">
+          <p className="text-xs font-semibold text-x-gray mb-2">
+            <Users className="w-3 h-3 inline mr-1" />
+            Liked by
+          </p>
+
+          {likersError && (
+            <p className="text-xs text-red-400">{likersError}</p>
+          )}
+
+          {likers && likers.length === 0 && !likersLoading && (
+            <p className="text-xs text-x-gray">No liking users found (may be private or too old)</p>
+          )}
+
+          {likers && likers.length > 0 && (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {likers.map((user) => (
+                <div key={user.id} className="flex items-center gap-2">
+                  {user.profile_image_url && (
+                    <img
+                      src={user.profile_image_url}
+                      alt=""
+                      className="w-6 h-6 rounded-full"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={`https://x.com/${user.username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-semibold hover:text-x-blue truncate block"
+                    >
+                      {user.name}
+                    </a>
+                    <span className="text-xs text-x-gray">@{user.username}</span>
+                    {user.public_metrics && (
+                      <span className="text-xs text-x-gray ml-2">
+                        {user.public_metrics.followers_count?.toLocaleString()} followers
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {likersNextToken && !likersLoading && (
+            <button
+              onClick={() => fetchLikers(likersNextToken)}
+              className="mt-2 text-xs text-x-blue hover:underline"
+            >
+              Load more...
+            </button>
+          )}
+
+          {likersLoading && (
+            <p className="text-xs text-x-gray animate-pulse">Loading liking users...</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,16 @@ import { logger } from '../../logger.js';
 const prisma = new PrismaClient();
 
 /**
+ * Safely convert a Prisma Bytes (Buffer) to Float32Array.
+ * Node.js pool-allocated Buffers may have non-4-byte-aligned offsets,
+ * so we copy into a fresh ArrayBuffer to guarantee alignment.
+ */
+function bufferToFloat32Array(buf) {
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  return new Float32Array(ab);
+}
+
+/**
  * Calculate cosine similarity between two vectors
  */
 function cosineSimilarity(vecA, vecB) {
@@ -65,8 +75,9 @@ export async function findSimilarTweetsBetweenUsers(userId1, userId2, minSimilar
     const similarities = [];
 
     for (const embed1 of user1Embeddings) {
+      const vec1 = bufferToFloat32Array(embed1.vector);
       for (const embed2 of user2Embeddings) {
-        const similarity = cosineSimilarity(embed1.vector, embed2.vector);
+        const similarity = cosineSimilarity(vec1, bufferToFloat32Array(embed2.vector));
 
         if (similarity >= minSimilarity) {
           similarities.push({
@@ -121,8 +132,9 @@ export async function findSimilarTweetsForUser(userId, minSimilarity = 0.8, limi
 
     // Compare each tweet with every other tweet
     for (let i = 0; i < embeddings.length - 1; i++) {
+      const vecI = bufferToFloat32Array(embeddings[i].vector);
       for (let j = i + 1; j < embeddings.length; j++) {
-        const similarity = cosineSimilarity(embeddings[i].vector, embeddings[j].vector);
+        const similarity = cosineSimilarity(vecI, bufferToFloat32Array(embeddings[j].vector));
 
         if (similarity >= minSimilarity) {
           similarities.push({
@@ -172,10 +184,11 @@ export async function findSimilarUsers(userId, minSimilarity = 0.6, limit = 10) 
     });
 
     // Calculate similarities
+    const userVector = bufferToFloat32Array(userEmbedding.vector);
     const similarities = otherUserEmbeddings
       .map(otherEmbed => ({
         user: otherEmbed.user,
-        similarity: cosineSimilarity(userEmbedding.vector, otherEmbed.vector)
+        similarity: cosineSimilarity(userVector, bufferToFloat32Array(otherEmbed.vector))
       }))
       .filter(item => item.similarity >= minSimilarity)
       .sort((a, b) => b.similarity - a.similarity)
@@ -221,7 +234,7 @@ export async function findSimilarToText(textEmbedding, userIds = [], minSimilari
     const similarities = embeddings
       .map(embed => ({
         tweet: embed.tweet,
-        similarity: cosineSimilarity(textEmbedding, embed.vector)
+        similarity: cosineSimilarity(textEmbedding, bufferToFloat32Array(embed.vector))
       }))
       .filter(item => item.similarity >= minSimilarity)
       .sort((a, b) => b.similarity - a.similarity)
@@ -232,7 +245,7 @@ export async function findSimilarToText(textEmbedding, userIds = [], minSimilari
       aboveThreshold: similarities.length
     });
 
-    return similarities;
+    return { results: similarities, totalCompared: embeddings.length };
   } catch (error) {
     logger.error('Failed to find similar tweets to text', { error: error.message });
     throw error;
@@ -268,27 +281,15 @@ export async function findTopTweetsByUserEmbedding(userId, limit = 20) {
       return [];
     }
 
-    // Convert user embedding Buffer to Float32Array
-    const userVector = new Float32Array(
-      userEmbedding.vector.buffer,
-      userEmbedding.vector.byteOffset,
-      userEmbedding.vector.byteLength / 4
-    );
+    // Convert embeddings from Buffer to Float32Array
+    const userVector = bufferToFloat32Array(userEmbedding.vector);
 
     // Calculate similarities with tweet embeddings
     const similarities = embeddings
-      .map(embed => {
-        // Convert tweet embedding Buffer to Float32Array
-        const tweetVector = new Float32Array(
-          embed.vector.buffer,
-          embed.vector.byteOffset,
-          embed.vector.byteLength / 4
-        );
-        return {
-          tweet: embed.tweet,
-          similarity: cosineSimilarity(userVector, tweetVector)
-        };
-      })
+      .map(embed => ({
+        tweet: embed.tweet,
+        similarity: cosineSimilarity(userVector, bufferToFloat32Array(embed.vector))
+      }))
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, limit);
 
@@ -333,6 +334,7 @@ export async function storeSimilarities(similarities, type = 'tweet') {
 
 export default {
   cosineSimilarity,
+  bufferToFloat32Array,
   findSimilarTweetsBetweenUsers,
   findSimilarTweetsForUser,
   findSimilarUsers,

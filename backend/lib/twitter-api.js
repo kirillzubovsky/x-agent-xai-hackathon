@@ -1,4 +1,5 @@
 import axios from "axios";
+import crypto from "crypto";
 import { config } from "../config.js";
 import { logger } from "../../logger.js";
 import { rateLimitManager } from "./rate-limiter.js";
@@ -812,6 +813,196 @@ class XAPIClient {
       total: allBlocked.length,
     });
     return allBlocked;
+  }
+
+  /**
+   * Generate OAuth 1.0a signature and Authorization header for user-context endpoints
+   */
+  _generateOAuthHeader(method, url, params = {}) {
+    const oauthParams = {
+      oauth_consumer_key: config.xcom.apiKey,
+      oauth_nonce: crypto.randomBytes(16).toString("hex"),
+      oauth_signature_method: "HMAC-SHA1",
+      oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+      oauth_token: config.xcom.accessToken,
+      oauth_version: "1.0",
+    };
+
+    // Combine oauth params + query params, sort, and encode
+    const allParams = { ...oauthParams, ...params };
+    const paramString = Object.keys(allParams)
+      .sort()
+      .map(
+        (k) =>
+          `${encodeURIComponent(k)}=${encodeURIComponent(allParams[k])}`,
+      )
+      .join("&");
+
+    const signatureBase = [
+      method.toUpperCase(),
+      encodeURIComponent(url),
+      encodeURIComponent(paramString),
+    ].join("&");
+
+    const signingKey = `${encodeURIComponent(config.xcom.apiSecret)}&${encodeURIComponent(config.xcom.accessTokenSecret)}`;
+
+    oauthParams.oauth_signature = crypto
+      .createHmac("sha1", signingKey)
+      .update(signatureBase)
+      .digest("base64");
+
+    const header =
+      "OAuth " +
+      Object.keys(oauthParams)
+        .sort()
+        .map(
+          (k) =>
+            `${encodeURIComponent(k)}="${encodeURIComponent(oauthParams[k])}"`,
+        )
+        .join(", ");
+
+    return header;
+  }
+
+  /**
+   * Check if OAuth 1.0a user-context credentials are configured
+   */
+  hasUserContext() {
+    return !!(
+      config.xcom.apiKey &&
+      config.xcom.apiSecret &&
+      config.xcom.accessToken &&
+      config.xcom.accessTokenSecret
+    );
+  }
+
+  /**
+   * Make a request using OAuth 1.0a user-context authentication
+   */
+  async _makeUserContextRequest(endpointType, method, urlPath, queryParams = {}) {
+    if (!this.hasUserContext()) {
+      throw new Error(
+        "OAuth 1.0a user-context not configured. Set X_COM_ACCESS_TOKEN and X_COM_ACCESS_TOKEN_SECRET in .env",
+      );
+    }
+
+    await rateLimitManager.checkAndWait(endpointType);
+
+    const startTime = Date.now();
+    const fullUrl = this.baseURL + urlPath;
+
+    logger.api(`X API OAuth Request [${method.toUpperCase()}] Start`, {
+      endpointType,
+      url: fullUrl,
+    });
+
+    const authHeader = this._generateOAuthHeader(method, fullUrl, queryParams);
+
+    const maxRetries = 5;
+    let lastError;
+    let delay = 0;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await axios({
+          method,
+          url: fullUrl,
+          params: queryParams,
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+          timeout: 30000,
+        });
+
+        const duration = Date.now() - startTime;
+        logger.api(`X API OAuth Request [${method.toUpperCase()}] Success`, {
+          endpointType,
+          duration,
+          status: response.status,
+        });
+
+        if (response.headers) {
+          rateLimitManager.updateLimits(endpointType, response.headers);
+        }
+
+        requestInspector.capture({
+          provider: "X",
+          model: null,
+          type: `${method.toUpperCase()}-${endpointType}`,
+          request: { url: fullUrl, method: method.toUpperCase() },
+          response: { status: response.status, data: response.data },
+          duration,
+          usage: null,
+          context: { endpointType, auth: "OAuth1.0a" },
+          userMessage: null,
+        });
+
+        return response.data;
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status || "network";
+
+        logger.api(
+          `X API OAuth Attempt ${attempt}/${maxRetries} Failed`,
+          { endpointType, status, error: error.message },
+        );
+
+        if (attempt === maxRetries) throw lastError;
+
+        delay = 1000 * Math.pow(2, attempt - 1);
+        if (status === 429) {
+          const resetHeader = error.response?.headers["x-rate-limit-reset"];
+          if (resetHeader) {
+            delay = Math.max(delay, parseInt(resetHeader) * 1000 - Date.now());
+          }
+        } else if (status < 500 && error.response) {
+          throw error; // Non-retryable client error
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  /**
+   * Get users who liked a specific tweet (requires OAuth 1.0a user-context)
+   * @param {string} tweetId - The tweet ID
+   * @param {object} options - { maxResults=100, paginationToken }
+   * @returns {Promise<object>} { data: [users], meta, nextToken }
+   */
+  async getLikingUsers(tweetId, options = {}) {
+    const { maxResults = 100, paginationToken = null } = options;
+
+    const params = {
+      max_results: Math.min(maxResults, 100).toString(),
+      "user.fields": "id,username,name,profile_image_url,public_metrics,description,verified",
+    };
+
+    if (paginationToken) params.pagination_token = paginationToken;
+
+    try {
+      const responseData = await this._makeUserContextRequest(
+        "liking_users",
+        "get",
+        `/tweets/${tweetId}/liking_users`,
+        params,
+      );
+
+      return {
+        data: responseData.data || [],
+        meta: responseData.meta || {},
+        nextToken: responseData.meta?.next_token,
+      };
+    } catch (error) {
+      logger.error("Failed to get liking users", {
+        tweetId,
+        error: error.message,
+        status: error.response?.status,
+        detail: error.response?.data,
+      });
+      throw error;
+    }
   }
 
   async getRateLimitStatus() {

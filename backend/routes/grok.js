@@ -24,7 +24,7 @@ try {
 // Chat with Grok using context from loaded users
 router.post('/ask', async (req, res) => {
   try {
-    const { message, userIds = [], includeEmbeddings = false } = req.body;
+    const { message, userIds = [], includeEmbeddings = false, includeFollowers = false } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message required' });
@@ -42,7 +42,8 @@ router.post('/ask', async (req, res) => {
       users: [],
       tweets: [],
       similarityTweets: [],
-      embeddings: []
+      embeddings: [],
+      followers: []
     };
 
     for (const userId of userIds) {
@@ -78,6 +79,32 @@ router.post('/ask', async (req, res) => {
             context.embeddings.push(userEmbedding);
           }
         }
+
+        // Get followers if requested
+        if (includeFollowers) {
+          const relations = await prisma.followerRelation.findMany({
+            where: { userId },
+            include: {
+              follower: {
+                select: {
+                  username: true,
+                  displayName: true,
+                  description: true,
+                  followersCount: true,
+                  tweetCount: true,
+                  verified: true,
+                  verifiedType: true,
+                }
+              }
+            },
+            orderBy: { follower: { followersCount: 'desc' } },
+            take: 2000
+          });
+          context.followers.push(...relations.map(r => ({
+            ...r.follower,
+            followsUser: user.username
+          })));
+        }
       }
     }
 
@@ -87,7 +114,8 @@ router.post('/ask', async (req, res) => {
       userCount: context.users.length,
       tweetCount: context.tweets.length,
       similarityTweetCount: context.similarityTweets.length,
-      embeddingCount: context.embeddings.length
+      embeddingCount: context.embeddings.length,
+      followerCount: context.followers.length
     });
 
     // Get the AI response

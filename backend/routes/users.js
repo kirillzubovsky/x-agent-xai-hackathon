@@ -1586,6 +1586,16 @@ router.post('/:userId/followers-full', async (req, res) => {
               }
             });
           }
+
+          // Create follower relation
+          const followerUser = existingUser || await prisma.user.findUnique({ where: { twitterUserId: follower.id } });
+          if (followerUser) {
+            await prisma.followerRelation.upsert({
+              where: { userId_followerId: { userId, followerId: followerUser.id } },
+              update: {},
+              create: { userId, followerId: followerUser.id }
+            });
+          }
         } catch (error) {
           logger.error('Failed to store follower', {
             followerUsername: follower.username,
@@ -1611,6 +1621,95 @@ router.post('/:userId/followers-full', async (req, res) => {
     });
   } catch (error) {
     logger.error('Failed to get full followers', { userId, error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get stored followers from database (no API call)
+router.get('/:userId/stored-followers', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const relations = await prisma.followerRelation.findMany({
+      where: { userId },
+      include: {
+        follower: {
+          select: {
+            id: true,
+            twitterUserId: true,
+            username: true,
+            displayName: true,
+            description: true,
+            profileImageUrl: true,
+            verified: true,
+            verifiedType: true,
+            followersCount: true,
+            followingCount: true,
+            tweetCount: true,
+            listedCount: true,
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const followers = relations.map(r => ({
+      id: r.follower.twitterUserId,
+      username: r.follower.username,
+      name: r.follower.displayName,
+      description: r.follower.description,
+      profile_image_url: r.follower.profileImageUrl,
+      verified: r.follower.verified,
+      verified_type: r.follower.verifiedType,
+      public_metrics: {
+        followers_count: r.follower.followersCount,
+        following_count: r.follower.followingCount,
+        tweet_count: r.follower.tweetCount,
+        listed_count: r.follower.listedCount,
+      },
+      _dbId: r.follower.id,
+    }));
+
+    res.json({ userId, total: followers.length, data: followers });
+  } catch (error) {
+    logger.error('Failed to get stored followers', { userId: req.params.userId, error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sync follower relations from X API (cheap - only fetches IDs, not full profiles)
+router.post('/:userId/sync-follower-ids', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    logger.api('Syncing follower IDs for user', { userId, twitterUserId: user.twitterUserId });
+
+    // Fetch all follower IDs from X API (cheap - just IDs)
+    const followers = await xAPI.getFullUserFollowers(user.twitterUserId, { maxUsers: Infinity });
+
+    let linkedCount = 0;
+    for (const follower of followers) {
+      try {
+        const existingUser = await prisma.user.findUnique({ where: { twitterUserId: follower.id } });
+        if (existingUser) {
+          await prisma.followerRelation.upsert({
+            where: { userId_followerId: { userId, followerId: existingUser.id } },
+            update: {},
+            create: { userId, followerId: existingUser.id }
+          });
+          linkedCount++;
+        }
+      } catch (err) {
+        // skip individual errors
+      }
+    }
+
+    logger.system('Follower IDs synced', { userId, totalFromApi: followers.length, linkedInDb: linkedCount });
+    res.json({ userId, totalFromApi: followers.length, linkedInDb: linkedCount });
+  } catch (error) {
+    logger.error('Failed to sync follower IDs', { userId: req.params.userId, error: error.message });
     res.status(500).json({ error: error.message });
   }
 });

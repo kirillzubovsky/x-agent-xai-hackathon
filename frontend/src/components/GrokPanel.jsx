@@ -61,6 +61,7 @@ export function GrokPanel({ columns }) {
         message,
         userIds: columns.map(c => c.userId),
         includeEmbeddings: grokContext.includeEmbeddings,
+        includeFollowers: grokContext.includeFollowers,
       });
       return res.data;
     },
@@ -226,6 +227,15 @@ export function GrokPanel({ columns }) {
                   className="rounded"
                 />
                 <span>Include embeddings</span>
+              </label>
+              <label className="flex items-center space-x-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={grokContext.includeFollowers}
+                  onChange={(e) => updateGrokContext({ includeFollowers: e.target.checked })}
+                  className="rounded"
+                />
+                <span>Include followers</span>
               </label>
             </div>
 

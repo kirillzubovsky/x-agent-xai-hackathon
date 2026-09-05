@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../../logger.js';
 import similarityService from '../services/similarity-service.js';
+import embeddingService from '../services/embedding-service.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -153,20 +154,32 @@ router.get('/stats', async (req, res) => {
 // Search for similar content
 router.post('/search', async (req, res) => {
   try {
-    const { text, limit = 10 } = req.body;
+    const { text, userId, minSimilarity = 0.3, limit = 50 } = req.body;
 
     if (!text) {
       return res.status(400).json({ error: 'Text required for search' });
     }
 
-    // Note: In production, this would:
-    // 1. Generate embedding for the text
-    // 2. Search for similar embeddings
-    // 3. Return matching tweets/users
+    // Clean text the same way tweets were cleaned before embedding
+    const cleanedText = embeddingService.cleanTweetText(text);
+
+    // Generate embedding for cleaned search text
+    const embedding = await embeddingService.generateEmbedding(cleanedText);
+
+    // Find similar tweets
+    const userIds = userId ? [userId] : [];
+    const { results, totalCompared } = await similarityService.findSimilarToText(
+      embedding,
+      userIds,
+      parseFloat(minSimilarity),
+      parseInt(limit)
+    );
 
     res.json({
-      message: 'Similarity search not yet implemented',
-      query: text
+      query: text,
+      cleanedQuery: cleanedText,
+      results,
+      totalCompared
     });
 
   } catch (error) {

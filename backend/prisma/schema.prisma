@@ -35,6 +35,8 @@ model User {
   userSimilarity1 UserSimilarity[] @relation("user1")
   userSimilarity2 UserSimilarity[] @relation("user2")
   collections     DataCollection[]
+  followers       FollowerRelation[] @relation("userFollowers")
+  following       FollowerRelation[] @relation("followingUsers")
 
   @@index([username])
   @@index([twitterUserId])
@@ -182,6 +184,21 @@ model DataCollection {
   @@index([userId, collectionType])
   @@index([status])
   @@index([createdAt])
+}
+
+// FollowerRelation model - tracks who follows whom
+model FollowerRelation {
+  id         String   @id @default(cuid())
+  userId     String   // The user who is being followed
+  followerId String   // The user who is a follower
+  createdAt  DateTime @default(now())
+
+  user     User @relation("userFollowers", fields: [userId], references: [id], onDelete: Cascade)
+  follower User @relation("followingUsers", fields: [followerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, followerId])
+  @@index([userId])
+  @@index([followerId])
 }
 
 // RateLimit model - tracks API rate limits

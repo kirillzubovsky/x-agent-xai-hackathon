@@ -24,6 +24,7 @@ export const useStore = create(
   grokContext: {
     userIds: [],
     includeEmbeddings: false,
+    includeFollowers: false,
   },
 
   updateGrokContext: (context) => {
